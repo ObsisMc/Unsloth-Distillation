@@ -23,3 +23,7 @@ wandb login
 
 ## Quick Start
 
+```python
+
+python trainer.py
+```
