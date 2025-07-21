@@ -36,6 +36,7 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
       max_seq_length=max_seq_length,
       dtype=dtype,
       load_in_4bit=load_in_4bit,
+      device_map = "balanced",
       # token = "hf_...", # use one if using gated models like meta-llama/Llama-2-7b-hf
   )
 
@@ -109,6 +110,7 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
       max_seq_length=max_seq_length,
       dataset_num_proc=8,
       args=UnslothTrainingArguments(
+          ddp_find_unused_parameters = False,
           dataset_text_field="text",
           per_device_train_batch_size=12,
           gradient_accumulation_steps=16,
