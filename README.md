@@ -2,8 +2,10 @@
 
 ## Install
 
+Need python version < 3.13
+
 ```shell
-pip install unsloth evaluate rouge_score wandb huggingface-hub
+pip install unsloth evaluate rouge_score wandb huggingface-hub scikit-learn
 ```
 
 ## Config
