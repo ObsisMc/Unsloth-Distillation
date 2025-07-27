@@ -40,6 +40,12 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
       # token = "hf_...", # use one if using gated models like meta-llama/Llama-2-7b-hf
   )
 
+  print("Model dtype:", next(model.parameters()).dtype)
+  # for name, module in model.named_modules():
+  #   if "Linear" in str(type(module)):
+  #       print(f"{name}: {type(module)}")
+  print(any(isinstance(m, bnb.nn.Linear4bit) for m in model.modules()))
+
 
   ## load PEFT
   model = FastLanguageModel.get_peft_model(
