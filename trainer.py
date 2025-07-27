@@ -25,6 +25,7 @@ from transformers import TrainingArguments, DataCollatorForSeq2Seq
 from unsloth import is_bfloat16_supported
 from unsloth import UnslothTrainer, UnslothTrainingArguments
 from trl import SFTTrainer
+import bitsandbytes as bnb
 
 
 def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_model_root, sft_output_dir, prompts):
