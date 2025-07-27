@@ -183,7 +183,7 @@ if __name__ == "__main__":
     eval_root = os.path.join(root_path, "data/eval")
     result_root = os.path.join(root_path, "result")
 
-    max_seq_length = 8096  # Choose any! We auto support RoPE Scaling internally!
+    max_seq_length = 1024  # Choose any! We auto support RoPE Scaling internally!
     dtype = (
         None  # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
     )
