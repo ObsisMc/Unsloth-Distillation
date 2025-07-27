@@ -27,3 +27,10 @@ wandb login
 
 python trainer.py
 ```
+
+## Troubleshooting
+
+> AttributeError: module 'PIL.Image' has no attribute 'Resampling'
+```shell
+pip install --upgrade Pillow
+```
