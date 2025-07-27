@@ -36,3 +36,8 @@ python trainer.py
 ```shell
 pip install --upgrade Pillow
 ```
+
+
+> Fail to train when `load_in_4bits=True` with multi GPUs
+
+Currently no solution, please delete `device_map="balanced"`, which can force it to train on only one GPU. However, the training performance will be much worse (higher GPU usage and slower training speed)` than that in the machine with only 1 GPU.
