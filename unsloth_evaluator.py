@@ -118,10 +118,11 @@ class UnslothEvaluator:
             List of extracted answer choices (e.g., ['A', 'B'])
         """
         return self.answer_extractor.extract_answers(response, question)
+
     
     def calculate_accuracy(self, predicted: List[str], correct: List[str]) -> bool:
         """
-        Calculate if the predicted answers are correct.
+        Calculate if the predicted answers are correct (exact match).
         
         Args:
             predicted: List of predicted answer choices
@@ -130,11 +131,65 @@ class UnslothEvaluator:
         Returns:
             True if answers match exactly, False otherwise
         """
-        # Sort both lists to compare regardless of order
-        predicted_sorted = set(predicted)
-        correct_sorted = set(correct)
+        metrics = self.calculate_metrics(predicted, correct)
+        return metrics['exact_match']
+
         
-        return predicted_sorted == correct_sorted
+    def calculate_metrics(self, predicted: List[str], correct: List[str]) -> Dict[str, float]:
+        """
+        Calculate multiple metrics for predicted vs correct answers.
+        
+        Args:
+            predicted: List of predicted answer choices
+            correct: List of correct answer choices
+            
+        Returns:
+            Dictionary containing various metrics
+        """
+        # Convert to sets for set operations
+        pred_set = set(predicted)
+        correct_set = set(correct)
+        
+        # 1. Exact Match Accuracy (original metric)
+        exact_match = sorted(predicted) == sorted(correct)
+        
+        # 2. Jaccard Similarity (intersection over union)
+        intersection = len(pred_set & correct_set)
+        union = len(pred_set | correct_set)
+        jaccard_similarity = intersection / union if union > 0 else 0.0
+        
+        # 3. Precision (how many predicted answers are correct)
+        precision = intersection / len(pred_set) if len(pred_set) > 0 else 0.0
+        
+        # 4. Recall (how many correct answers were predicted)
+        recall = intersection / len(correct_set) if len(correct_set) > 0 else 0.0
+        
+        # 5. F1 Score (harmonic mean of precision and recall)
+        f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+        
+        # 6. Partial Credit Score (proportion of correct answers found)
+        partial_credit = intersection / len(correct_set) if len(correct_set) > 0 else 0.0
+        
+        # 7. Over-prediction Penalty (penalty for extra wrong answers)
+        over_prediction_penalty = max(0, len(pred_set) - len(correct_set)) / max(len(correct_set), 1)
+        
+        # 8. Under-prediction Penalty (penalty for missing correct answers)
+        under_prediction_penalty = max(0, len(correct_set) - len(pred_set)) / max(len(correct_set), 1)
+        
+        return {
+            'exact_match': exact_match,
+            'jaccard_similarity': jaccard_similarity,
+            'precision': precision,
+            'recall': recall,
+            'f1_score': f1_score,
+            'partial_credit': partial_credit,
+            'over_prediction_penalty': over_prediction_penalty,
+            'under_prediction_penalty': under_prediction_penalty,
+            'intersection_size': intersection,
+            'union_size': union,
+            'predicted_size': len(pred_set),
+            'correct_size': len(correct_set)
+        }
     
     def evaluate_dataset(self, dataset_path: str, output_path: str = None) -> Dict[str, Any]:
         """
@@ -149,11 +204,18 @@ class UnslothEvaluator:
         """
         # Load dataset
         with open(dataset_path, 'r', encoding='utf-8') as f:
-            dataset = json.load(f)[:5]
+            dataset = json.load(f)
         
         total_questions = len(dataset)
         correct_answers = 0
         detailed_results = []
+        
+        # Initialize metrics accumulators
+        total_jaccard = 0.0
+        total_precision = 0.0
+        total_recall = 0.0
+        total_f1 = 0.0
+        total_partial_credit = 0.0
         
         print(f"Evaluating Unsloth model on {total_questions} questions...")
         print("=" * 60)
@@ -169,6 +231,21 @@ class UnslothEvaluator:
             response = self.call_model(question)
             if not response:
                 print("❌ Failed to get response from model")
+                # Use empty metrics for failed responses
+                metrics = {
+                    'exact_match': False,
+                    'jaccard_similarity': 0.0,
+                    'precision': 0.0,
+                    'recall': 0.0,
+                    'f1_score': 0.0,
+                    'partial_credit': 0.0,
+                    'over_prediction_penalty': 0.0,
+                    'under_prediction_penalty': 0.0,
+                    'intersection_size': 0,
+                    'union_size': len(correct_answer),
+                    'predicted_size': 0,
+                    'correct_size': len(correct_answer)
+                }
                 detailed_results.append({
                     'question_id': i,
                     'question': question,
@@ -176,16 +253,25 @@ class UnslothEvaluator:
                     'predicted_answer': [],
                     'response': response,
                     'correct': False,
-                    'error': 'No response from model'
+                    'error': 'No response from model',
+                    'metrics': metrics
                 })
                 continue
             
             # Extract predicted answers
             predicted_answer = self.extract_answers(response)
             
-            # Check if correct
-            is_correct = self.calculate_accuracy(predicted_answer, correct_answer)
-            if is_correct:
+            # Calculate all metrics
+            metrics = self.calculate_metrics(predicted_answer, correct_answer)
+            
+            # Accumulate metrics
+            total_jaccard += metrics['jaccard_similarity']
+            total_precision += metrics['precision']
+            total_recall += metrics['recall']
+            total_f1 += metrics['f1_score']
+            total_partial_credit += metrics['partial_credit']
+            
+            if metrics['exact_match']:
                 correct_answers += 1
                 print("✅ Correct")
             else:
@@ -193,6 +279,7 @@ class UnslothEvaluator:
             
             print(f"Correct: {correct_answer}")
             print(f"Predicted: {predicted_answer}")
+            print(f"Jaccard: {metrics['jaccard_similarity']:.3f}, F1: {metrics['f1_score']:.3f}")
             print(f"Full Response: {response}")
             print("-" * 60)
             
@@ -202,17 +289,30 @@ class UnslothEvaluator:
                 'correct_answer': correct_answer,
                 'predicted_answer': predicted_answer,
                 'response': response,
-                'correct': is_correct
+                'correct': metrics['exact_match'],
+                'metrics': metrics
             })
         
         # Calculate final metrics
         accuracy = correct_answers / total_questions if total_questions > 0 else 0
+        avg_jaccard = total_jaccard / total_questions if total_questions > 0 else 0
+        avg_precision = total_precision / total_questions if total_questions > 0 else 0
+        avg_recall = total_recall / total_questions if total_questions > 0 else 0
+        avg_f1 = total_f1 / total_questions if total_questions > 0 else 0
+        avg_partial_credit = total_partial_credit / total_questions if total_questions > 0 else 0
         
         results = {
             'model_name': self.model_name,
             'total_questions': total_questions,
             'correct_answers': correct_answers,
-            'accuracy': accuracy,
+            'metrics': {
+                'exact_match_accuracy': accuracy,
+                'jaccard_similarity': avg_jaccard,
+                'precision': avg_precision,
+                'recall': avg_recall,
+                'f1_score': avg_f1,
+                'partial_credit': avg_partial_credit
+            },
             'detailed_results': detailed_results
         }
         
@@ -224,7 +324,7 @@ class UnslothEvaluator:
                     'model_name': results['model_name'],
                     'total_questions': results['total_questions'],
                     'correct_answers': results['correct_answers'],
-                    'accuracy': results['accuracy'],
+                    'metrics': results['metrics'],
                     'evaluation_timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
                 },
                 'detailed_responses': detailed_results,
@@ -254,6 +354,16 @@ class UnslothEvaluator:
         total_questions = len(detailed_results)
         correct_count = sum(1 for r in detailed_results if r['correct'])
         accuracy = correct_count / total_questions if total_questions > 0 else 0
+        
+        # Calculate average metrics
+        if detailed_results and 'metrics' in detailed_results[0]:
+            avg_jaccard = sum(r['metrics']['jaccard_similarity'] for r in detailed_results) / total_questions
+            avg_precision = sum(r['metrics']['precision'] for r in detailed_results) / total_questions
+            avg_recall = sum(r['metrics']['recall'] for r in detailed_results) / total_questions
+            avg_f1 = sum(r['metrics']['f1_score'] for r in detailed_results) / total_questions
+            avg_partial_credit = sum(r['metrics']['partial_credit'] for r in detailed_results) / total_questions
+        else:
+            avg_jaccard = avg_precision = avg_recall = avg_f1 = avg_partial_credit = 0.0
         
         # Response length analysis
         response_lengths = [len(r['response']) for r in detailed_results]
@@ -291,6 +401,13 @@ class UnslothEvaluator:
                 'incorrect_answers': total_questions - correct_count,
                 'accuracy': accuracy,
                 'accuracy_percentage': accuracy * 100
+            },
+            'metrics_summary': {
+                'average_jaccard_similarity': avg_jaccard,
+                'average_precision': avg_precision,
+                'average_recall': avg_recall,
+                'average_f1_score': avg_f1,
+                'average_partial_credit': avg_partial_credit
             },
             'response_length_analysis': {
                 'average_length': avg_length,
@@ -353,10 +470,21 @@ def main():
     """Main function to run Unsloth model evaluation."""
     # Configuration
     model_name = "Qwen/Qwen3-32B"
+    model_name = "results/model/sft/Qwen3-32B/checkpoint-31"
+    # model_name = "results/model/sft/Qwen3-32B_fft/checkpoint-62"
     extraction_model_name = "gpt-4o-mini"
     # model_name = "Qwen/Qwen3-32B"
     dataset_path = 'eval_data/GPQA-V1.json'
-    output_path = 'unsloth_evaluation_results.json'
+    output_root = Path("results/eval")
+    output_file = "qwen3_32b_lora_results_more_metric.json"
+    # output_file = "qwen3_32b_lora_results.json"
+    # output_file = "qwen3_32b_fft_2epoch_results_more_metric.json"
+    output_path = output_root / output_file
+
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    max_seq_length = 1024
+    load_in_4bit = False
     
     # Check if dataset exists
     if not Path(dataset_path).exists():
@@ -366,8 +494,8 @@ def main():
     # Initialize evaluator
     evaluator = UnslothEvaluator(
         model_name=model_name,
-        max_seq_length=1024,
-        load_in_4bit=True,
+        max_seq_length=max_seq_length,
+        load_in_4bit=load_in_4bit,
         extraction_model_name=extraction_model_name  # Optional: use smaller model for extraction
     )
     
@@ -386,7 +514,14 @@ def main():
         print(f"Model: {results['model_name']}")
         print(f"Total Questions: {results['total_questions']}")
         print(f"Correct Answers: {results['correct_answers']}")
-        print(f"Accuracy: {results['accuracy']:.4f} ({results['accuracy']*100:.2f}%)")
+        print("\n📊 METRICS:")
+        metrics = results['metrics']
+        print(f"  Exact Match Accuracy: {metrics['exact_match_accuracy']:.4f} ({metrics['exact_match_accuracy']*100:.2f}%)")
+        print(f"  Jaccard Similarity:   {metrics['jaccard_similarity']:.4f} ({metrics['jaccard_similarity']*100:.2f}%)")
+        print(f"  Precision:             {metrics['precision']:.4f} ({metrics['precision']*100:.2f}%)")
+        print(f"  Recall:                {metrics['recall']:.4f} ({metrics['recall']*100:.2f}%)")
+        print(f"  F1 Score:              {metrics['f1_score']:.4f} ({metrics['f1_score']*100:.2f}%)")
+        print(f"  Partial Credit:        {metrics['partial_credit']:.4f} ({metrics['partial_credit']*100:.2f}%)")
         print("=" * 60)
         
     except KeyboardInterrupt:
