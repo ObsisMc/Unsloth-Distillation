@@ -12,10 +12,12 @@ from pathlib import Path
 import torch
 from unsloth import FastLanguageModel
 from transformers import DataCollatorForSeq2Seq
+from answer_extractor import OpenAIAnswerExtractor
 
 class UnslothEvaluator:
     def __init__(self, model_name: str, max_seq_length: int = 4096, 
-                 dtype=None, load_in_4bit: bool = True, device: str = "cuda", thinking: bool=True):
+                 dtype=None, load_in_4bit: bool = True, device: str = "cuda",
+                 extraction_model_name: str = None):
         """
         Initialize the Unsloth evaluator.
         
@@ -25,15 +27,15 @@ class UnslothEvaluator:
             dtype: Data type (None for auto detection)
             load_in_4bit: Use 4bit quantization
             device: Device to run inference on
+            extraction_model_name: Optional different model for answer extraction
         """
         self.model_name = model_name
         self.max_seq_length = max_seq_length
         self.dtype = dtype
         self.load_in_4bit = load_in_4bit
         self.device = device
-        self.thinking = thinking
         
-        # Load model and tokenizer
+        # Load main model and tokenizer
         print(f"Loading Unsloth model from: {model_name}")
         self.model, self.tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_name,
@@ -46,14 +48,18 @@ class UnslothEvaluator:
         FastLanguageModel.for_inference(self.model)
         print("Model loaded successfully!")
         
-    def call_model(self, question: str, max_new_tokens: int = 256) -> str:
+        # Initialize answer extractor
+        extraction_model = extraction_model_name or model_name
+        self.answer_extractor = OpenAIAnswerExtractor(
+            model=extraction_model,
+        )
+        
+    def call_model(self, question: str) -> str:
         """
         Call the Unsloth model to get response.
         
         Args:
             question: The question to ask the model
-            max_new_tokens: Maximum number of new tokens to generate
-            
         Returns:
             Model response as string
         """
@@ -63,7 +69,7 @@ class UnslothEvaluator:
                 [{"role": "user", "content": question}],
                 tokenize=False,
                 add_generation_prompt=True,
-                enable_thinking=self.thinking
+                enable_thinking=False
             )
             
             # Tokenize input
@@ -79,7 +85,7 @@ class UnslothEvaluator:
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=max_new_tokens,
+                    max_new_tokens=self.max_seq_length,
                     use_cache=True,
                     repetition_penalty=1.1,
                     do_sample=True,
@@ -100,29 +106,18 @@ class UnslothEvaluator:
             print(f"Error generating response: {e}")
             return ""
     
-    def extract_answers(self, response: str) -> List[str]:
+    def extract_answers(self, response: str, question: str = None) -> List[str]:
         """
-        Extract answer choices from model response.
+        Extract answer choices from model response using AnswerExtractor.
         
         Args:
             response: Model response string
+            question: Original question for context (optional)
             
         Returns:
             List of extracted answer choices (e.g., ['A', 'B'])
         """
-        # Look for patterns like "A", "B", "C", etc. in the response
-        answer_pattern = r'\b([A-E])\b'
-        matches = re.findall(answer_pattern, response.upper())
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_answers = []
-        for match in matches:
-            if match not in seen:
-                seen.add(match)
-                unique_answers.append(match)
-        
-        return unique_answers
+        return self.answer_extractor.extract_answers(response, question)
     
     def calculate_accuracy(self, predicted: List[str], correct: List[str]) -> bool:
         """
@@ -136,8 +131,8 @@ class UnslothEvaluator:
             True if answers match exactly, False otherwise
         """
         # Sort both lists to compare regardless of order
-        predicted_sorted = sorted(predicted)
-        correct_sorted = sorted(correct)
+        predicted_sorted = set(predicted)
+        correct_sorted = set(correct)
         
         return predicted_sorted == correct_sorted
     
@@ -154,7 +149,7 @@ class UnslothEvaluator:
         """
         # Load dataset
         with open(dataset_path, 'r', encoding='utf-8') as f:
-            dataset = json.load(f)[:2]
+            dataset = json.load(f)[:5]
         
         total_questions = len(dataset)
         correct_answers = 0
@@ -324,39 +319,6 @@ class UnslothEvaluator:
             ]
         }
     
-    def save_individual_responses(self, detailed_results: List[Dict], output_path: str):
-        """
-        Save individual question responses to separate files for easier analysis.
-        
-        Args:
-            detailed_results: List of detailed evaluation results
-            output_path: Base output path for the main results file
-        """
-        # Create responses directory
-        responses_dir = Path(output_path).parent / "responses"
-        responses_dir.mkdir(exist_ok=True)
-        
-        # Save each response individually
-        for result in detailed_results:
-            question_id = result['question_id']
-            response_file = responses_dir / f"question_{question_id:03d}.json"
-            
-            # Create a clean response record
-            response_record = {
-                'question_id': question_id,
-                'question': result['question'],
-                'correct_answer': result['correct_answer'],
-                'predicted_answer': result['predicted_answer'],
-                'full_response': result['response'],
-                'correct': result['correct'],
-                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
-            with open(response_file, 'w', encoding='utf-8') as f:
-                json.dump(response_record, f, ensure_ascii=False, indent=2)
-        
-        print(f"Individual responses saved to: {responses_dir}")
-    
     def test_model(self, test_prompts: List[str] = None):
         """
         Test the model with sample prompts.
@@ -390,11 +352,11 @@ class UnslothEvaluator:
 def main():
     """Main function to run Unsloth model evaluation."""
     # Configuration
-    model_name = "/home/ubuntu/train/Unsloth-Distillation/results/model/sft/Qwen3-32B/checkpoint-38/"
     model_name = "Qwen/Qwen3-32B"
+    extraction_model_name = "gpt-4o-mini"
+    # model_name = "Qwen/Qwen3-32B"
     dataset_path = 'eval_data/GPQA-V1.json'
     output_path = 'unsloth_evaluation_results.json'
-    thinking = False
     
     # Check if dataset exists
     if not Path(dataset_path).exists():
@@ -404,9 +366,9 @@ def main():
     # Initialize evaluator
     evaluator = UnslothEvaluator(
         model_name=model_name,
-        max_seq_length=4096,
+        max_seq_length=1024,
         load_in_4bit=True,
-        thinking=thinking
+        extraction_model_name=extraction_model_name  # Optional: use smaller model for extraction
     )
     
     # Test model first
