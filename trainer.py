@@ -28,7 +28,7 @@ from trl import SFTTrainer
 import bitsandbytes as bnb
 
 
-def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_model_root, sft_output_dir, prompts):
+def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_model_root, sft_output_dir, prompts, thinking=True):
   ## Load Model
   print("-" * 50)
   print("Loading Model...")
@@ -90,7 +90,7 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
           {"role": "assistant", "content": answer},
       ]
       text = tokenizer.apply_chat_template(
-          messages, tokenize=False, add_generation_prompt=False
+          messages, tokenize=False, add_generation_prompt=False, thinking=thinking
       )
       return {"text": text}
 
@@ -122,10 +122,10 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
           per_device_train_batch_size=12,
           gradient_accumulation_steps=16,
           # Use num_train_epochs and warmup_ratio for longer runs!
-          max_steps = 5,
+          # max_steps = 5,
           # warmup_steps = 10,
           warmup_ratio=0.1,
-          num_train_epochs=4,
+          num_train_epochs=1,
           # Select a 2 to 10x smaller learning rate for the embedding matrices!
           learning_rate=5e-5,
           embedding_learning_rate=1e-5,
@@ -141,7 +141,7 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
           # run_name = "weldingbook_distill",
           save_strategy="steps",
           save_steps=19,
-          eval_steps=50,
+          # eval_steps=50,
       ),
   )
 
@@ -160,6 +160,7 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
                   [{"role": "user", "content": prompt}],
                   tokenize=False,
                   add_generation_prompt=True,
+                  thinking=thinking
               )
               for prompt in prompts
           ],
@@ -190,14 +191,16 @@ if __name__ == "__main__":
     eval_root = os.path.join(root_path, "data/eval")
     result_root = os.path.join(root_path, "result")
 
-    max_seq_length = 1024  # Choose any! We auto support RoPE Scaling internally!
+    max_seq_length = 2048  # Choose any! We auto support RoPE Scaling internally!
     dtype = (
         None  # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
     )
     load_in_4bit = True  # Use 4bit quantization to reduce memory usage. Can be False.
+    thinking = False
     
     ### Dataset
     dataset_name = "Obsismc/Welding-Handbook-QA"
+    dataset_name = "Obsismc/deepeval-synthetic-welding-QA"
     # dataset_name = "Obsismc/radiographic-testing-zh"
     
     prompts = [
@@ -228,5 +231,6 @@ if __name__ == "__main__":
         load_in_4bit=load_in_4bit,
         prompts=prompts,
         sft_model_root=sft_model_root,
-        sft_output_dir=sft_output_dir
+        sft_output_dir=sft_output_dir,
+        thinking=thinking
     )
