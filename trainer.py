@@ -28,7 +28,7 @@ from trl import SFTTrainer
 import bitsandbytes as bnb
 
 
-def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_model_root, sft_output_dir, prompts, thinking=True):
+def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_model_root, sft_output_dir, prompts, thinking=True, full_finefune=False):
   ## Load Model
   print("-" * 50)
   print("Loading Model...")
@@ -38,6 +38,7 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
       dtype=dtype,
       load_in_4bit=load_in_4bit,
       device_map = "balanced",
+      full_finetuning=full_finefune
       # token = "hf_...", # use one if using gated models like meta-llama/Llama-2-7b-hf
   )
 
@@ -48,30 +49,31 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
   print(any(isinstance(m, bnb.nn.Linear4bit) for m in model.modules()))
 
 
-  ## load PEFT
-  model = FastLanguageModel.get_peft_model(
-      model,
-      r=128,  # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
-      target_modules=[
-          "q_proj",
-          "k_proj",
-          "v_proj",
-          "o_proj",
-          "gate_proj",
-          "up_proj",
-          "down_proj",
-          "embed_tokens",
-          "lm_head",
-      ],  # Add for continual pretraining
-      lora_alpha=128,
-      lora_dropout=0,
-      bias="none",
-      # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
-      use_gradient_checkpointing="unsloth",  # True or "unsloth" for very long context
-      random_state=42,
-      use_rslora=False,  # We support rank stabilized LoRA
-      loftq_config=None,  # And LoftQ
-  )
+  if not full_finefune:
+      ## load PEFT
+      model = FastLanguageModel.get_peft_model(
+          model,
+          r=128,  # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+          target_modules=[
+              "q_proj",
+              "k_proj",
+              "v_proj",
+              "o_proj",
+              "gate_proj",
+              "up_proj",
+              "down_proj",
+              "embed_tokens",
+              "lm_head",
+          ],  # Add for continual pretraining
+          lora_alpha=64,
+          lora_dropout=0,
+          bias="none",
+          # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
+          use_gradient_checkpointing="unsloth",  # True or "unsloth" for very long context
+          random_state=42,
+          use_rslora=False,  # We support rank stabilized LoRA
+          loftq_config=None,  # And LoftQ
+      )
 
 
   ## Load Dataset
@@ -125,7 +127,7 @@ def train(model_name, max_seq_length, dtype, load_in_4bit, dataset_name, sft_mod
           # max_steps = 5,
           # warmup_steps = 10,
           warmup_ratio=0.1,
-          num_train_epochs=1,
+          num_train_epochs=2,
           # Select a 2 to 10x smaller learning rate for the embedding matrices!
           learning_rate=5e-5,
           embedding_learning_rate=1e-5,
@@ -195,7 +197,7 @@ if __name__ == "__main__":
     dtype = (
         None  # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
     )
-    load_in_4bit = True  # Use 4bit quantization to reduce memory usage. Can be False.
+    load_in_4bit = False  # Use 4bit quantization to reduce memory usage. Can be False.
     thinking = False
     
     ### Dataset
@@ -220,9 +222,12 @@ if __name__ == "__main__":
     # model_name = "Qwen/Qwen2.5-3B-Instruct"
     model_name = "Qwen/Qwen2.5-7B-Instruct-1M"
     model_name = "Qwen/Qwen3-32B"
-    sft_output_dir = "Qwen3-32B"
+    model_name = "Qwen/Qwen2.5-7B-Instruct"
+    model_name = "Qwen/Qwen3-32B"
+    sft_output_dir = "Qwen3-32B_fft"
     sft_output_dir = os.path.join(sft_model_root, sft_output_dir)
-    
+
+    full_finefune = True
     train(
         dataset_name=dataset_name,
         model_name=model_name,
@@ -232,5 +237,6 @@ if __name__ == "__main__":
         prompts=prompts,
         sft_model_root=sft_model_root,
         sft_output_dir=sft_output_dir,
-        thinking=thinking
+        thinking=thinking,
+        full_finefune=full_finefune
     )
