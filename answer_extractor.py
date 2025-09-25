@@ -1,51 +1,54 @@
 #!/usr/bin/env python3
 """
-Answer extractor for multi-choice questions using LLM.
+Answer extractor for multi-choice questions using OpenAI's structured output.
 """
 
 import re
 import json
-import torch
+import os
 from typing import List, Optional
-from unsloth import FastLanguageModel
+from pydantic import BaseModel, Field
+import openai
+from dotenv import load_dotenv
 
-class AnswerExtractor:
-    """LLM-based answer extractor for multi-choice questions."""
+load_dotenv()
+
+class AnswerExtraction(BaseModel):
+    """Structured output model for answer extraction."""
+    selected_answers: List[str] = Field(
+        description="List of selected answer choices (e.g., ['A', 'B'])",
+        examples=[["A"], ["A", "C"], ["B", "D", "E"]]
+    )
+
+class OpenAIAnswerExtractor:
+    """OpenAI-based answer extractor using structured output for multi-choice questions."""
     
-    def __init__(self, model_name: str, max_seq_length: int = 2048, 
-                 dtype=None, load_in_4bit: bool = True, device: str = "cuda"):
+    def __init__(self, api_key: str = None, model: str = "gpt-4o"):
         """
-        Initialize the answer extractor.
+        Initialize the OpenAI answer extractor.
         
         Args:
-            model_name: Name of the model to use for extraction
-            max_seq_length: Maximum sequence length
-            dtype: Data type (None for auto detection)
-            load_in_4bit: Use 4bit quantization
-            device: Device to run inference on
+            api_key: OpenAI API key (if None, will try to get from environment)
+            model: OpenAI model to use (gpt-3.5-turbo, gpt-4, etc.)
         """
-        self.model_name = model_name
-        self.max_seq_length = max_seq_length
-        self.dtype = dtype
-        self.load_in_4bit = load_in_4bit
-        self.device = device
+        self.api_key = api_key or self._get_api_key()
+        self.model = model
         
-        # Load model and tokenizer
-        print(f"Loading extraction model: {model_name}")
-        self.model, self.tokenizer = FastLanguageModel.from_pretrained(
-            model_name=model_name,
-            max_seq_length=max_seq_length,
-            dtype=dtype,
-            load_in_4bit=load_in_4bit,
-        )
+        if not self.api_key:
+            raise ValueError("OpenAI API key is required. Set OPENAI_API_KEY environment variable or pass api_key parameter.")
         
-        # Enable inference mode
-        FastLanguageModel.for_inference(self.model)
-        print("Extraction model loaded successfully!")
+        # Initialize OpenAI client as instance variable
+        self.client = openai.OpenAI(api_key=self.api_key)
+        
+        print(f"OpenAI Answer Extractor initialized with model: {model}")
+    
+    def _get_api_key(self) -> str:
+        """Get API key from environment variable."""
+        return os.getenv('OPENAI_API_KEY')
     
     def extract_answers(self, response: str, question: str = None) -> List[str]:
         """
-        Extract answer choices from model response.
+        Extract answer choices from model response using OpenAI's structured output.
         
         Args:
             response: Model response string
@@ -63,103 +66,33 @@ Question: {question or 'Multiple choice question'}
 Model Response: {response}
 
 Please extract ONLY the answer choices (A, B, C, D, E) that the model selected. 
-- Return them as a JSON array
+- Return them as a list of uppercase letters
 - Include ALL selected answers
-- Use only uppercase letters
-- If no clear answer is given, return an empty array []
+- If no clear answer is given, return an empty list
 
-Example format: ["A", "C"] or ["B"] or []
+Examples:
+- If the model selected A and C: ["A", "C"]
+- If the model selected only B: ["B"]
+- If no clear answer: []"""
 
-Extracted answers:"""
-
-            # Prepare input
-            input_text = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": extraction_prompt}],
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False
+            # Call OpenAI API with structured output
+            completion = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": extraction_prompt}
+                ],
+                response_format=AnswerExtraction,
+                temperature=0.1
             )
             
-            inputs = self.tokenizer(
-                input_text,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=self.max_seq_length
-            ).to(self.device)
-            
-            # Generate extraction response
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=50,  # Short response for extraction
-                    use_cache=True,
-                    repetition_penalty=1.1,
-                    do_sample=True,
-                    temperature=0.1,
-                    top_p=0.9,
-                    pad_token_id=self.tokenizer.eos_token_id
-                )
-            
-            # Decode response
-            extraction_response = self.tokenizer.decode(
-                outputs[0][inputs['input_ids'].shape[1]:], 
-                skip_special_tokens=True
-            ).strip()
-            
-            # Parse the extraction response
-            return self._parse_extraction_response(extraction_response)
+            # Parse the structured response
+            result = completion.choices[0].message.parsed
+            return result.selected_answers
             
         except Exception as e:
-            print(f"Error in LLM extraction: {e}")
+            print(f"Error in OpenAI structured extraction: {e}")
             # Fallback to regex extraction
             return self._regex_extraction(response)
-    
-    def _parse_extraction_response(self, response: str) -> List[str]:
-        """
-        Parse the extraction response using multiple methods.
-        
-        Args:
-            response: Extraction response from LLM
-            
-        Returns:
-            List of extracted answer choices
-        """
-        try:
-            # Method 1: Try to parse as JSON directly
-            try:
-                parsed = json.loads(response)
-                if isinstance(parsed, list):
-                    # Filter only valid answer choices
-                    valid_answers = [str(item).upper() for item in parsed if str(item).upper() in ['A', 'B', 'C', 'D', 'E']]
-                    return list(set(valid_answers))  # Remove duplicates
-            except json.JSONDecodeError:
-                pass
-            
-            # Method 2: Look for JSON array pattern
-            json_match = re.search(r'\[["\']?([A-E])["\']?(?:,\s*["\']?([A-E])["\']?)*\]', response)
-            if json_match:
-                # Extract letters from the match
-                letters = re.findall(r'[A-E]', json_match.group())
-                return list(set(letters))  # Remove duplicates
-            
-            # Method 3: Look for individual letters in order
-            letters = re.findall(r'\b([A-E])\b', response.upper())
-            if letters:
-                return list(set(letters))  # Remove duplicates
-            
-            # Method 4: Look for "Answer: A, B" pattern
-            answer_match = re.search(r'(?:answer|answers?)[:\s]+([A-E](?:,\s*[A-E])*)', response.lower())
-            if answer_match:
-                letters = re.findall(r'[A-E]', answer_match.group(1).upper())
-                return list(set(letters))  # Remove duplicates
-            
-            # If no valid answers found, return empty list
-            return []
-            
-        except Exception as e:
-            print(f"Error parsing extraction response: {e}")
-            return []
     
     def _regex_extraction(self, response: str) -> List[str]:
         """
@@ -188,11 +121,8 @@ Extracted answers:"""
 # Example usage
 if __name__ == "__main__":
     # Test the extractor
-    extractor = AnswerExtractor(
-        model_name="Qwen/Qwen2.5-1.5B",  # Use a smaller model for extraction
-        max_seq_length=2048,
-        load_in_4bit=True
-    )
+    model = "gpt-4o-mini"
+    extractor = OpenAIAnswerExtractor(model=model)
     
     # Test cases
     test_cases = [
@@ -203,17 +133,32 @@ if __name__ == "__main__":
         },
         {
             "response": "I think the answer is A, C",
-            "question": "Test question",
+            "question": "Test question", 
             "expected": ["A", "C"]
         },
         {
-            "response": '["A", "C"]',
+            "response": "The correct answers are B and D",
             "question": "Test question",
+            "expected": ["B", "D"]
+        },
+        {
+            "response": "Let's analyze this step by step. The question asks about cutting method selection. Looking at the options, option A mentions economy, process capability, and material effects as key factors in selection, which is absolutely correct since these are fundamental considerations. Option B makes an incorrect absolute statement about thermal cutting being always best, which can't be true since different materials and situations require different approaches. Option C correctly notes that nonthermal methods, while slower, offer precision advantages for various materials - this is accurate particularly for materials that may be damaged by thermal processes. Option D is incorrect as thermal cutting methods are generally better suited for metals rather than nonmetals. Therefore, based on this analysis, the correct answers are A and C.",
+            "question": "3. Which of the following statements about cutting method selection are correct?\nA: The selection of a cutting method should prioritize economy, process capability, and material effects.\nB: Thermal cutting methods are always the best choice for all materials.\nC: Nonthermal cutting methods are slower but offer precision on various materials.\nD: Thermal cutting methods are more suitable for nonmetals than metals.",
+            "expected": ["A", "C"]
+        },
+        {
+            "response": "Based on the question about Electroslag Welding, I believe option A is correct because shielding gas is essential for protecting the molten pool.",
+            "question": "1. Which of the following statements about Electroslag Welding (ESW) is correct?\nA: Electroslag welding requires shielding gas to protect the molten pool.\nB: Electroslag welding starts with an arc and then transitions to an electric resistance process once the molten pool is high enough.\nC: The process of electroslag welding relies entirely on the arc heating, without transitioning to other methods.\nD: Pressure is applied during the electroslag welding process to enhance the fusion of metals.",
+            "expected": ["B"]
+        },
+        {
+            "response": "For the question about cutting method selection, I would say options B and D are correct. Thermal cutting methods have proven to be highly effective across all materials, and they work particularly well with nonmetals due to their lower melting points.",
+            "question": "3. Which of the following statements about cutting method selection are correct?\nA: The selection of a cutting method should prioritize economy, process capability, and material effects.\nB: Thermal cutting methods are always the best choice for all materials.\nC: Nonthermal cutting methods are slower but offer precision on various materials.\nD: Thermal cutting methods are more suitable for nonmetals than metals.",
             "expected": ["A", "C"]
         }
     ]
     
-    print("Testing Answer Extractor:")
+    print("Testing OpenAI Answer Extractor:")
     print("=" * 40)
     
     for i, test in enumerate(test_cases, 1):
