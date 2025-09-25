@@ -28,6 +28,11 @@ Need python version < 3.13
 pip install unsloth evaluate rouge_score wandb huggingface-hub scikit-learn
 ```
 
+For evaluation, 
+```shell
+pip install openai dotenv
+```
+
 ## Config
 
 ### Huggingface Hub
