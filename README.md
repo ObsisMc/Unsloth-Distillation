@@ -59,6 +59,7 @@ python trainer.py
 Customize your parameters in these methods:
 ```python
 # specify your dateset, model, output path and so on
+# the dateset should have the same structure as https://huggingface.co/datasets/Obsismc/deepeval-synthetic-welding-QA
 train(
     dataset_name=dataset_name,
     model_name=model_name,
@@ -140,7 +141,7 @@ trainer = UnslothTrainer(
 ```
 
 
-### Evaluate
+### Evaluation
 ```python
 python unsloth_evaluator.py
 ```
@@ -160,6 +161,29 @@ output_file = "qwen3_32b_lora_results_more_metric.json"
 max_seq_length = 1024
 load_in_4bit = False
 ```
+
+The evaluation dataset should have the same structure as 
+```json
+[
+    {
+        "question": "1. 沸腾钢的特点是什么?\nA: 金属表面外层较纯.\nB: 夹杂物分布均匀.\nC: 有偏析区.\nD: 有较高的冲击韧性.\nE: Si的含水量量为1.4%.",
+        "answer": [
+            "A",
+            "C"
+        ]
+    },
+    {
+        "question": "3. 碳钢中有益的伴生元素为:\nA: Mn.\nB: Si.\nC: Al.\nD: P.\nE: N.",
+        "answer": [
+            "A",
+            "B",
+            "C"
+        ]
+    }
+]
+```
+which only contains multi-choice questions.
+
 
 
 ## Troubleshooting
