@@ -50,10 +50,117 @@ wandb login
 
 ## Quick Start
 
-```python
+### Training
 
+```python
 python trainer.py
 ```
+
+Customize your parameters in these methods:
+```python
+# specify your dateset, model, output path and so on
+train(
+    dataset_name=dataset_name,
+    model_name=model_name,
+    max_seq_length=max_seq_length,
+    dtype=dtype,
+    load_in_4bit=load_in_4bit,
+    prompts=prompts,
+    sft_model_root=sft_model_root,
+    sft_output_dir=sft_output_dir,
+    thinking=thinking,
+    full_finefune=full_finefune
+)
+```
+
+```python
+# customize your LoRA if using PEFT method rather than full fine tuning
+model = FastLanguageModel.get_peft_model(
+    model,
+    r=128,  # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+    target_modules=[
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+        "embed_tokens",
+        "lm_head",
+    ],  # Add for continual pretraining
+    lora_alpha=64,
+    lora_dropout=0,
+    bias="none",
+    # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
+    use_gradient_checkpointing="unsloth",  # True or "unsloth" for very long context
+    random_state=42,
+    use_rslora=False,  # We support rank stabilized LoRA
+    loftq_config=None,  # And LoftQ
+)
+```
+
+```python
+# customize your training config like batch size, gradient accumulation step, epoch, learning rate, saving step and so on.
+trainer = UnslothTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=train_data,
+    eval_dataset=valid_data,
+    max_seq_length=max_seq_length,
+    dataset_num_proc=8,
+    args=UnslothTrainingArguments(
+        ddp_find_unused_parameters = False,
+        dataset_text_field="text",
+        per_device_train_batch_size=12,
+        gradient_accumulation_steps=16,
+        # Use num_train_epochs and warmup_ratio for longer runs!
+        # max_steps = 5,
+        # warmup_steps = 10,
+        warmup_ratio=0.1,
+        num_train_epochs=2,
+        # Select a 2 to 10x smaller learning rate for the embedding matrices!
+        learning_rate=5e-5,
+        embedding_learning_rate=1e-5,
+        fp16=not is_bfloat16_supported(),
+        bf16=is_bfloat16_supported(),
+        logging_steps=1,
+        optim="adamw_8bit",
+        weight_decay=0.00,
+        lr_scheduler_type="linear",
+        seed=42,
+        output_dir=sft_output_dir,
+        report_to="wandb",  # Use this for WandB etc
+        # run_name = "weldingbook_distill",
+        save_strategy="steps",
+        save_steps=19,
+        # eval_steps=50,
+    ),
+)
+```
+
+
+### Evaluate
+```python
+python unsloth_evaluator.py
+```
+
+Customize your evaluation parameters:
+```python
+# Configuration
+model_name = "Qwen/Qwen3-32B"  # you can evaluate model in huggingface hub
+model_name = "results/model/sft/Qwen3-32B/checkpoint-31" # or evaluate your local model
+
+extraction_model_name = "gpt-4o-mini" # openai api to extract answers in responses from evaluated model
+
+dataset_path = 'eval_data/GPQA-V1.json'
+output_root = Path("results/eval")
+output_file = "qwen3_32b_lora_results_more_metric.json"
+
+max_seq_length = 1024
+load_in_4bit = False
+```
+
 
 ## Troubleshooting
 
