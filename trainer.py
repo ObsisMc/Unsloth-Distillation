@@ -228,6 +228,7 @@ if __name__ == "__main__":
     sft_output_dir = os.path.join(sft_model_root, sft_output_dir)
 
     full_finefune = True
+    print(f"==> Dataset: {dataset_name}\n==> Model: {model_name}\n==> Output path: {sft_output_dir}\n==> Full Finetuning: {full_finefune}")
     train(
         dataset_name=dataset_name,
         model_name=model_name,
