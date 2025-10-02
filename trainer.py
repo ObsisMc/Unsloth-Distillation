@@ -203,6 +203,7 @@ if __name__ == "__main__":
     ### Dataset
     dataset_name = "Obsismc/Welding-Handbook-QA"
     dataset_name = "Obsismc/deepeval-synthetic-welding-QA"
+    dataset_name = "Obsismc/deepeval-synthetic-welding-QA-20k"
     # dataset_name = "Obsismc/radiographic-testing-zh"
     
     prompts = [
